@@ -77,6 +77,14 @@ angular.module('redash', [
         templateUrl: '/views/admin_status.html',
         controller: 'AdminStatusCtrl'
       });
+      $routeProvider.when('/admin/queries/outdated', {
+        templateUrl: '/views/admin/outdated_queries.html',
+        controller: 'AdminOutdatedQueriesCtrl'
+      });
+      $routeProvider.when('/admin/queries/tasks', {
+        templateUrl: '/views/admin/tasks.html',
+        controller: 'AdminTasksCtrl'
+      });
 
       $routeProvider.when('/alerts', {
         templateUrl: '/views/alerts/list.html',

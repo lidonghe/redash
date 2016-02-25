@@ -15,7 +15,7 @@ from werkzeug.routing import BaseConverter, ValidationError
 class SlugConverter(BaseConverter):
     def to_python(self, value):
         # This is an ugly workaround for when we enable multi-org and some files are being called by the index rule:
-        if value in ('google_login.png', 'favicon.ico', 'robots.txt', 'views'):
+        if value in ('google_login.png', 'favicon.ico', 'robots.txt', 'views', 'api'):
             raise ValidationError()
 
         return value
