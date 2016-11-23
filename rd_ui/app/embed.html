@@ -10,16 +10,16 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
 
     <!-- build:css /styles/embed.css -->
-    <link rel="stylesheet" href="/bower_components/bootstrap/dist/css/bootstrap.css">
-    <link rel="stylesheet" href="/bower_components/codemirror/lib/codemirror.css">
-    <link rel="stylesheet" href="/bower_components/gridster/dist/jquery.gridster.css">
+    <link rel="stylesheet" href="/styles/superflat_redash.css">
+    <link rel="stylesheet" href="/bower_components/material-design-iconic-font/dist/css/material-design-iconic-font.css">
     <link rel="stylesheet" href="/bower_components/pivottable/dist/pivot.css">
     <link rel="stylesheet" href="/bower_components/cornelius/src/cornelius.css">
     <link rel="stylesheet" href="/bower_components/angular-ui-select/dist/select.css">
     <link rel="stylesheet" href="/bower_components/pace/themes/pace-theme-minimal.css">
     <link rel="stylesheet" href="/bower_components/font-awesome/css/font-awesome.css">
-    <link rel="stylesheet" href="/bower_components/codemirror/addon/hint/show-hint.css">
     <link rel="stylesheet" href="/bower_components/leaflet/dist/leaflet.css">
+    <link rel="stylesheet" href="/bower_components/leaflet.markercluster/dist/MarkerCluster.css">
+    <link rel="stylesheet" href="/bower_components/leaflet.markercluster/dist/MarkerCluster.Default.css">
     <link rel="stylesheet" href="/styles/redash.css">
     <!-- endbuild -->
 
@@ -28,9 +28,7 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16.png">
 
     <style>
-        body { padding:0; }
-        .col-lg-12, .row, .container, .panel { margin:0; padding:0; }
-        .container::after, .row::after { display:none; }
+        body { padding: 0; }
     </style>
 </head>
 <body>
@@ -39,7 +37,9 @@
 
 {% include 'vendor_scripts.html' %}
 
-<!-- build:js({.tmp,app}) /scripts/embed-scripts.js -->
+<!-- build:js({.tmp,rd_ui/app}) /scripts/embed-scripts.js -->
+<script src="/scripts/vendor/cloud.js"></script>
+<script src="/scripts/vendor/d3.sankey.js"></script>
 <script src="/scripts/embed.js"></script>
 <script src="/scripts/services/services.js"></script>
 <script src="/scripts/services/resources.js"></script>
@@ -61,10 +61,11 @@
 <script src="/scripts/visualizations/box.js"></script>
 <script src="/scripts/visualizations/table.js"></script>
 <script src="/scripts/visualizations/pivot.js"></script>
-<script src="/scripts/visualizations/date_range_selector.js"></script>
+<script src="/scripts/visualizations/wordcloud.js"></script>
+<script src="/scripts/visualizations/sunburst_sequence.js"></script>
+<script src="/scripts/visualizations/sankey.js"></script>
 <script src="/scripts/directives/directives.js"></script>
 <script src="/scripts/directives/query_directives.js"></script>
-<script src="/scripts/directives/data_source_directives.js"></script>
 <script src="/scripts/directives/dashboard_directives.js"></script>
 <script src="/scripts/filters.js"></script>
 <script src="/scripts/controllers/alerts.js"></script>
@@ -74,8 +75,6 @@
     var clientConfig = {{ client_config|safe }};
     var visualization = {{ visualization|safe }};
     var query_result = {{ query_result|safe }};
-
-    {{ analytics|safe }}
 </script>
 
 </body>

@@ -2,7 +2,17 @@
 set -eu
 
 REDASH_BASE_PATH=/opt/redash
-FILES_BASE_URL=https://raw.githubusercontent.com/getredash/redash/master/setup/ubuntu/files/
+
+# Default branch/version to master if not specified in REDASH_BRANCH env var
+REDASH_BRANCH="${REDASH_BRANCH:-master}"
+
+# Install latest version if not specified in REDASH_VERSION env var
+REDASH_VERSION=${REDASH_VERSION-0.11.1.b2095}
+LATEST_URL="https://github.com/getredash/redash/releases/download/v${REDASH_VERSION}/redash.${REDASH_VERSION}.tar.gz"
+VERSION_DIR="/opt/redash/redash.${REDASH_VERSION}"
+REDASH_TARBALL=/tmp/redash.tar.gz
+
+FILES_BASE_URL=https://raw.githubusercontent.com/getredash/redash/${REDASH_BRANCH}/setup/ubuntu/files/
 
 # Verify running as root:
 if [ "$(id -u)" != "0" ]; then
@@ -16,10 +26,25 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 # Base packages
-apt-get update
-apt-get dist-upgrade
+apt-get -y update
+DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dist-upgrade
 apt-get install -y python-pip python-dev nginx curl build-essential pwgen
-pip install -U setuptools
+# BigQuery dependencies:
+apt-get install -y libffi-dev libssl-dev
+# MySQL dependencies:
+apt-get install -y libmysqlclient-dev
+# Microsoft SQL Server dependencies:
+apt-get install -y freetds-dev
+# Hive dependencies:
+apt-get install -y libsasl2-dev
+#Saml dependency
+apt-get install -y xmlsec1
+
+# Upgrade pip if host is Ubuntu 16.04
+if [[ $(lsb_release -d) = *Ubuntu* ]] && [[ $(lsb_release -rs) = *16.04* ]]; then
+	pip install --upgrade pip
+fi
+pip install -U setuptools==23.1.0
 
 # redash user
 # TODO: check user doesn't exist yet?
@@ -98,12 +123,6 @@ if [ ! -f "/opt/redash/.env" ]; then
     sudo -u redash wget $FILES_BASE_URL"env" -O /opt/redash/.env
 fi
 
-# Install latest version
-REDASH_VERSION=${REDASH_VERSION-0.9.1.b1377}
-LATEST_URL="https://github.com/getredash/redash/releases/download/v${REDASH_VERSION}/redash.$REDASH_VERSION.tar.gz"
-VERSION_DIR="/opt/redash/redash.$REDASH_VERSION"
-REDASH_TARBALL=/tmp/redash.tar.gz
-
 if [ ! -d "$VERSION_DIR" ]; then
     sudo -u redash wget "$LATEST_URL" -O "$REDASH_TARBALL"
     sudo -u redash mkdir "$VERSION_DIR"
@@ -144,20 +163,11 @@ if [ $pg_user_exists -ne 0 ]; then
     sudo -u postgres psql -c "CREATE ROLE redash_reader WITH PASSWORD '$REDASH_READER_PASSWORD' NOCREATEROLE NOCREATEDB NOSUPERUSER LOGIN"
     sudo -u redash psql -c "grant select(id,name,type) ON data_sources to redash_reader;" redash
     sudo -u redash psql -c "grant select(id,name) ON users to redash_reader;" redash
-    sudo -u redash psql -c "grant select on events, queries, dashboards, widgets, visualizations, query_results to redash_reader;" redash
+    sudo -u redash psql -c "grant select on alerts, alert_subscriptions, groups, events, queries, dashboards, widgets, visualizations, query_results to redash_reader;" redash
 
     cd /opt/redash/current
-    sudo -u redash bin/run ./manage.py ds new -n "re:dash metadata" -t "pg" -o "{\"user\": \"redash_reader\", \"password\": \"$REDASH_READER_PASSWORD\", \"host\": \"localhost\", \"dbname\": \"redash\"}"
+    sudo -u redash bin/run ./manage.py ds new "Re:dash Metadata" --type "pg" --options "{\"user\": \"redash_reader\", \"password\": \"$REDASH_READER_PASSWORD\", \"host\": \"localhost\", \"dbname\": \"redash\"}"
 fi
-
-# BigQuery dependencies:
-apt-get install -y libffi-dev libssl-dev
-
-# MySQL dependencies:
-apt-get install -y libmysqlclient-dev
-
-# Microsoft SQL Server dependencies:
-apt-get install -y freetds-dev
 
 # Pip requirements for all data source types
 cd /opt/redash/current

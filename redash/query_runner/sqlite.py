@@ -3,14 +3,17 @@ import logging
 import sqlite3
 import sys
 
-from redash.query_runner import BaseQueryRunner
+from redash.query_runner import BaseSQLQueryRunner
 from redash.query_runner import register
 
 from redash.utils import JSONEncoder
 
 logger = logging.getLogger(__name__)
 
-class Sqlite(BaseQueryRunner):
+
+class Sqlite(BaseSQLQueryRunner):
+    noop_query = "SELECT 1"
+
     @classmethod
     def configuration_schema(cls):
         return {
@@ -33,22 +36,21 @@ class Sqlite(BaseQueryRunner):
 
         self._dbpath = self.configuration['dbpath']
 
-    def get_schema(self):
+    def _get_tables(self, schema):
         query_table = "select tbl_name from sqlite_master where type='table'"
         query_columns = "PRAGMA table_info(%s)"
 
-        results, error = self.run_query(query_table)
+        results, error = self.run_query(query_table, None)
 
         if error is not None:
             raise Exception("Failed getting schema.")
 
         results = json.loads(results)
 
-        schema = {}
         for row in results['rows']:
             table_name = row['tbl_name']
             schema[table_name] = {'name': table_name, 'columns': []}
-            results_table, error = self.run_query(query_columns % (table_name,))
+            results_table, error = self.run_query(query_columns % (table_name,), None)
             if error is not None:
                 raise Exception("Failed getting schema.")
 
@@ -58,7 +60,7 @@ class Sqlite(BaseQueryRunner):
 
         return schema.values()
 
-    def run_query(self, query):
+    def run_query(self, query, user):
         connection = sqlite3.connect(self._dbpath)
 
         cursor = connection.cursor()

@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+import uuid
 
 from redash.query_runner import *
 from redash.utils import JSONEncoder
@@ -22,7 +23,17 @@ types_map = {
     5: TYPE_FLOAT,
 }
 
+
+class MSSQLJSONEncoder(JSONEncoder):
+    def default(self, o):
+        if isinstance(o, uuid.UUID):
+            return str(o)
+        return super(MSSQLJSONEncoder, self).default(o)
+
+
 class SqlServer(BaseSQLQueryRunner):
+    noop_query = "SELECT 1"
+
     @classmethod
     def configuration_schema(cls):
         return {
@@ -42,6 +53,16 @@ class SqlServer(BaseSQLQueryRunner):
                     "type": "number",
                     "default": 1433
                 },
+                "tds_version": {
+                    "type": "string",
+                    "default": "7.0",
+                    "title": "TDS Version"
+                },
+                "charset": {
+                    "type": "string",
+                    "default": "UTF-8",
+                    "title": "Character Set"
+                },
                 "db": {
                     "type": "string",
                     "title": "Database Name"
@@ -56,8 +77,16 @@ class SqlServer(BaseSQLQueryRunner):
         return enabled
 
     @classmethod
+    def name(cls):
+        return "Microsoft SQL Server"
+
+    @classmethod
     def type(cls):
         return "mssql"
+
+    @classmethod
+    def annotate_query(cls):
+        return False
 
     def __init__(self, configuration):
         super(SqlServer, self).__init__(configuration)
@@ -72,7 +101,7 @@ class SqlServer(BaseSQLQueryRunner):
                                   );
         """
 
-        results, error = self.run_query(query)
+        results, error = self.run_query(query, None)
 
         if error is not None:
             raise Exception("Failed getting schema.")
@@ -81,7 +110,7 @@ class SqlServer(BaseSQLQueryRunner):
 
         for row in results['rows']:
             if row['table_schema'] != self.configuration['db']:
-                table_name = '{}.{}'.format(row['table_schema'], row['table_name'])
+                table_name = u'{}.{}'.format(row['table_schema'], row['table_name'])
             else:
                 table_name = row['table_name']
 
@@ -92,9 +121,7 @@ class SqlServer(BaseSQLQueryRunner):
 
         return schema.values()
 
-
-    def run_query(self, query):
-
+    def run_query(self, query, user):
         connection = None
 
         try:
@@ -103,11 +130,17 @@ class SqlServer(BaseSQLQueryRunner):
             password = self.configuration.get('password', '')
             db = self.configuration['db']
             port = self.configuration.get('port', 1433)
+            tds_version = self.configuration.get('tds_version', '7.0')
+            charset = self.configuration.get('charset', 'UTF-8')
 
             if port != 1433:
                 server = server + ':' + str(port)
 
-            connection = pymssql.connect(server, user, password, db)
+            connection = pymssql.connect(server=server, user=user, password=password, database=db, tds_version=tds_version, charset=charset)
+
+            if isinstance(query, unicode):
+                query = query.encode(charset)
+
             cursor = connection.cursor()
             logger.debug("SqlServer running query: %s", query)
 
@@ -119,7 +152,7 @@ class SqlServer(BaseSQLQueryRunner):
                 rows = [dict(zip((c['name'] for c in columns), row)) for row in data]
 
                 data = {'columns': columns, 'rows': rows}
-                json_data = json.dumps(data, cls=JSONEncoder)
+                json_data = json.dumps(data, cls=MSSQLJSONEncoder)
                 error = None
             else:
                 error = "No data was returned."

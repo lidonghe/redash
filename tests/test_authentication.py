@@ -5,7 +5,7 @@ from mock import patch
 
 from tests import BaseTestCase
 from redash import models
-from redash.authentication.google_oauth import create_and_login_user
+from redash.authentication.google_oauth import create_and_login_user, verify_profile
 from redash.authentication import api_key_load_user_from_request, hmac_load_user_from_request, sign
 from redash.wsgi import app
 
@@ -73,7 +73,7 @@ class TestHMACAuthentication(BaseTestCase):
         super(TestHMACAuthentication, self).setUp()
         self.api_key = 10
         self.query = self.factory.create_query(api_key=self.api_key)
-        self.path = '/api/queries/{0}'.format(self.query.id)
+        self.path = '/{}/api/queries/{}'.format(self.query.org.slug, self.query.id)
         self.expires = time.time() + 1800
 
     def signature(self, expires):
@@ -91,12 +91,12 @@ class TestHMACAuthentication(BaseTestCase):
 
     def test_correct_signature(self):
         with app.test_client() as c:
-            rv = c.get('/api/queries/{0}'.format(self.query.id), query_string={'signature': self.signature(self.expires), 'expires': self.expires})
+            rv = c.get(self.path, query_string={'signature': self.signature(self.expires), 'expires': self.expires})
             self.assertIsNotNone(hmac_load_user_from_request(request))
 
     def test_no_query_id(self):
         with app.test_client() as c:
-            rv = c.get('/api/queries', query_string={'api_key': self.api_key})
+            rv = c.get('/{}/api/queries'.format(self.query.org.slug), query_string={'api_key': self.api_key})
             self.assertIsNone(hmac_load_user_from_request(request))
 
     def test_user_api_key(self):
@@ -125,3 +125,39 @@ class TestCreateAndLoginUser(BaseTestCase):
 
             self.assertTrue(login_user_mock.called)
             user = models.User.get(models.User.email == email)
+
+
+class TestVerifyProfile(BaseTestCase):
+    def test_no_domain_allowed_for_org(self):
+        profile = dict(email='arik@example.com')
+        self.assertFalse(verify_profile(self.factory.org, profile))
+
+    def test_domain_not_in_org_domains_list(self):
+        profile = dict(email='arik@example.com')
+        self.factory.org.settings[models.Organization.SETTING_GOOGLE_APPS_DOMAINS] = ['example.org']
+        self.factory.org.save()
+        self.assertFalse(verify_profile(self.factory.org, profile))
+
+    def test_domain_in_org_domains_list(self):
+        profile = dict(email='arik@example.com')
+        self.factory.org.settings[models.Organization.SETTING_GOOGLE_APPS_DOMAINS] = ['example.com']
+        self.factory.org.save()
+        self.assertTrue(verify_profile(self.factory.org, profile))
+
+        self.factory.org.settings[models.Organization.SETTING_GOOGLE_APPS_DOMAINS] = ['example.org', 'example.com']
+        self.factory.org.save()
+        self.assertTrue(verify_profile(self.factory.org, profile))
+
+    def test_org_in_public_mode_accepts_any_domain(self):
+        profile = dict(email='arik@example.com')
+        self.factory.org.settings[models.Organization.SETTING_IS_PUBLIC] = True
+        self.factory.org.settings[models.Organization.SETTING_GOOGLE_APPS_DOMAINS] = []
+        self.factory.org.save()
+        self.assertTrue(verify_profile(self.factory.org, profile))
+
+    def test_user_not_in_domain_but_account_exists(self):
+        profile = dict(email='arik@example.com')
+        self.factory.create_user(email='arik@example.com')
+        self.factory.org.settings[models.Organization.SETTING_GOOGLE_APPS_DOMAINS] = ['example.org']
+        self.factory.org.save()
+        self.assertTrue(verify_profile(self.factory.org, profile))

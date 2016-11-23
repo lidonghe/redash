@@ -9,19 +9,30 @@ from flask_login import current_user
 from flask_restful import abort
 import xlsxwriter
 from redash import models, settings, utils
-from redash.wsgi import api
 from redash.tasks import QueryTask, record_event
-from redash.permissions import require_permission, not_view_only, has_access
+from redash.permissions import require_permission, not_view_only, has_access, require_access, view_only
 from redash.handlers.base import BaseResource, get_object_or_404
 from redash.utils import collect_query_parameters, collect_parameters_from_request
+from redash.tasks.queries import enqueue_query
+
+
+def error_response(message):
+    return {'job': {'status': 4, 'error': message}}, 400
 
 
 def run_query(data_source, parameter_values, query_text, query_id, max_age=0):
     query_parameters = set(collect_query_parameters(query_text))
     missing_params = set(query_parameters) - set(parameter_values.keys())
     if missing_params:
-        return {'job': {'status': 4,
-                        'error': 'Missing parameter value for: {}'.format(", ".join(missing_params))}}, 400
+        return error_response('Missing parameter value for: {}'.format(", ".join(missing_params)))
+
+    if data_source.paused:
+        if data_source.pause_reason:
+            message = '{} is paused ({}). Please try later.'.format(data_source.name, data_source.pause_reason)
+        else:
+            message = '{} is paused. Please try later.'.format(data_source.name)
+
+        return error_response(message)
 
     if query_parameters:
         query_text = pystache.render(query_text, parameter_values)
@@ -34,12 +45,11 @@ def run_query(data_source, parameter_values, query_text, query_id, max_age=0):
     if query_result:
         return {'query_result': query_result.to_dict()}
     else:
-        job = QueryTask.add_task(query_text, data_source,
-                                 metadata={"Username": current_user.name, "Query ID": query_id})
+        job = enqueue_query(query_text, data_source, current_user.id, metadata={"Username": current_user.email, "Query ID": query_id})
         return {'job': job.to_dict()}
 
 
-class QueryResultListAPI(BaseResource):
+class QueryResultListResource(BaseResource):
     @require_permission('execute_query')
     def post(self):
         params = request.get_json(force=True)
@@ -68,13 +78,13 @@ class QueryResultListAPI(BaseResource):
 ONE_YEAR = 60 * 60 * 24 * 365.25
 
 
-class QueryResultAPI(BaseResource):
+class QueryResultResource(BaseResource):
     @staticmethod
     def add_cors_headers(headers):
         if 'Origin' in request.headers:
             origin = request.headers['Origin']
 
-            if origin in settings.ACCESS_CONTROL_ALLOW_ORIGIN:
+            if set(['*', origin]) & settings.ACCESS_CONTROL_ALLOW_ORIGIN:
                 headers['Access-Control-Allow-Origin'] = origin
                 headers['Access-Control-Allow-Credentials'] = str(settings.ACCESS_CONTROL_ALLOW_CREDENTIALS).lower()
 
@@ -105,16 +115,22 @@ class QueryResultAPI(BaseResource):
 
         if query_result_id:
             query_result = get_object_or_404(models.QueryResult.get_by_id_and_org, query_result_id, self.current_org)
+        else:
+            query_result = None
 
         if query_result:
+            require_access(query_result.data_source.groups, self.current_user, view_only)
+
             if isinstance(self.current_user, models.ApiUser):
                 event = {
                     'user_id': None,
                     'org_id': self.current_org.id,
                     'action': 'api_get',
                     'timestamp': int(time.time()),
-                    'api_key': self.current_user.id,
-                    'file_type': filetype
+                    'api_key': self.current_user.name,
+                    'file_type': filetype,
+                    'user_agent': request.user_agent.string,
+                    'ip': request.remote_addr
                 }
 
                 if query_id:
@@ -142,11 +158,12 @@ class QueryResultAPI(BaseResource):
             return response
 
         else:
-            abort(404)
+            abort(404, message='No cached result found for this query.')
 
     def make_json_response(self, query_result):
         data = json.dumps({'query_result': query_result.to_dict()}, cls=utils.JSONEncoder)
-        return make_response(data, 200, {})
+        headers = {'Content-Type': "application/json"}
+        return make_response(data, 200, headers)
 
     @staticmethod
     def make_csv_response(query_result):
@@ -177,7 +194,7 @@ class QueryResultAPI(BaseResource):
 
         for (r, row) in enumerate(query_data['rows']):
             for (c, name) in enumerate(column_names):
-                sheet.write(r + 1, c, row[name])
+                sheet.write(r + 1, c, row.get(name))
 
         book.close()
 
@@ -185,17 +202,8 @@ class QueryResultAPI(BaseResource):
         return make_response(s.getvalue(), 200, headers)
 
 
-api.add_org_resource(QueryResultListAPI, '/api/query_results', endpoint='query_results')
-api.add_org_resource(QueryResultAPI,
-                 '/api/query_results/<query_result_id>',
-                 '/api/queries/<query_id>/results.<filetype>',
-                 '/api/queries/<query_id>/results/<query_result_id>.<filetype>',
-                 endpoint='query_result')
-
-
-class JobAPI(BaseResource):
+class JobResource(BaseResource):
     def get(self, job_id):
-        # TODO: if finished, include the query result
         job = QueryTask(job_id=job_id)
         return {'job': job.to_dict()}
 
@@ -203,4 +211,3 @@ class JobAPI(BaseResource):
         job = QueryTask(job_id=job_id)
         job.cancel()
 
-api.add_org_resource(JobAPI, '/api/jobs/<job_id>', endpoint='job')

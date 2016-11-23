@@ -35,6 +35,8 @@ types_map = {
 
 
 class Impala(BaseSQLQueryRunner):
+    noop_query = "show schemas"
+
     @classmethod
     def configuration_schema(cls):
         return {
@@ -78,30 +80,26 @@ class Impala(BaseSQLQueryRunner):
         super(Impala, self).__init__(configuration)
 
     def _get_tables(self, schema_dict):
-        try:
-            schemas_query = "show schemas;"
+        schemas_query = "show schemas;"
+        tables_query = "show tables in %s;"
+        columns_query = "show column stats %s;"
 
-            tables_query = "show tables in %s;"
+        for schema_name in map(lambda a: a['name'], self._run_query_internal(schemas_query)):
+            for table_name in map(lambda a: a['name'], self._run_query_internal(tables_query % schema_name)):
+                columns = map(lambda a: a['Column'], self._run_query_internal(columns_query % table_name))
 
-            columns_query = "show column stats %s;"
+                if schema_name != 'default':
+                    table_name = '{}.{}'.format(schema_name, table_name)
 
-            for schema_name in map(lambda a: a['name'], self._run_query_internal(schemas_query)):
-                for table_name in map(lambda a: a['name'], self._run_query_internal(tables_query % schema_name)):
-                    columns = map(lambda a: a['Column'], self._run_query_internal(columns_query % table_name))
+                schema_dict[table_name] = {'name': table_name, 'columns': columns}
 
-                    if schema_name != 'default':
-                        table_name = '{}.{}'.format(schema_name, table_name)
+        return schema_dict.values()
 
-                    schema[table_name] = {'name': table_name, 'columns': columns}
-        except Exception, e:
-            raise sys.exc_info()[1], None, sys.exc_info()[2]
-        return schema.values()
-
-    def run_query(self, query):
+    def run_query(self, query, user):
 
         connection = None
         try:
-            connection = connect(**self.configuration)
+            connection = connect(**self.configuration.to_dict())
 
             cursor = connection.cursor()
 
@@ -142,7 +140,8 @@ class Impala(BaseSQLQueryRunner):
             logging.exception(e)
             raise sys.exc_info()[1], None, sys.exc_info()[2]
         finally:
-            connection.close()
+            if connection:
+                connection.close()
 
         return json_data, error
 

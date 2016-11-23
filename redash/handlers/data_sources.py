@@ -1,24 +1,22 @@
+import logging
 from flask import make_response, request
 from flask_restful import abort
 from funcy import project
 
 from redash import models
-from redash.wsgi import api
 from redash.utils.configuration import ConfigurationContainer, ValidationError
-from redash.permissions import require_admin
-from redash.query_runner import query_runners, get_configuration_schema_for_type
+from redash.permissions import require_admin, require_permission, require_access, view_only
+from redash.query_runner import query_runners, get_configuration_schema_for_query_runner_type
 from redash.handlers.base import BaseResource, get_object_or_404
 
 
-class DataSourceTypeListAPI(BaseResource):
+class DataSourceTypeListResource(BaseResource):
     @require_admin
     def get(self):
-        return [q.to_dict() for q in query_runners.values()]
-
-api.add_org_resource(DataSourceTypeListAPI, '/api/data_sources/types', endpoint='data_source_types')
+        return [q.to_dict() for q in sorted(query_runners.values(), key=lambda q: q.name())]
 
 
-class DataSourceAPI(BaseResource):
+class DataSourceResource(BaseResource):
     @require_admin
     def get(self, data_source_id):
         data_source = models.DataSource.get_by_id_and_org(data_source_id, self.current_org)
@@ -29,7 +27,7 @@ class DataSourceAPI(BaseResource):
         data_source = models.DataSource.get_by_id_and_org(data_source_id, self.current_org)
         req = request.get_json(True)
 
-        schema = get_configuration_schema_for_type(req['type'])
+        schema = get_configuration_schema_for_query_runner_type(req['type'])
         if schema is None:
             abort(400)
 
@@ -38,7 +36,7 @@ class DataSourceAPI(BaseResource):
             data_source.options.update(req['options'])
         except ValidationError:
             abort(400)
-
+        
         data_source.type = req['type']
         data_source.name = req['name']
         data_source.save()
@@ -53,7 +51,8 @@ class DataSourceAPI(BaseResource):
         return make_response('', 204)
 
 
-class DataSourceListAPI(BaseResource):
+class DataSourceListResource(BaseResource):
+    @require_permission('list_data_sources')
     def get(self):
         if self.current_user.has_permission('admin'):
             data_sources = models.DataSource.all(self.current_org)
@@ -65,11 +64,14 @@ class DataSourceListAPI(BaseResource):
             if ds.id in response:
                 continue
 
-            d = ds.to_dict()
-            d['view_only'] = all(project(ds.groups, self.current_user.groups).values())
-            response[ds.id] = d
+            try:
+                d = ds.to_dict()
+                d['view_only'] = all(project(ds.groups, self.current_user.groups).values())
+                response[ds.id] = d
+            except AttributeError:
+                logging.exception("Error with DataSource#to_dict (data source id: %d)", ds.id)
 
-        return response.values()
+        return sorted(response.values(), key=lambda d: d['id'])
 
     @require_admin
     def post(self):
@@ -79,7 +81,7 @@ class DataSourceListAPI(BaseResource):
             if f not in req:
                 abort(400)
 
-        schema = get_configuration_schema_for_type(req['type'])
+        schema = get_configuration_schema_for_query_runner_type(req['type'])
         if schema is None:
             abort(400)
 
@@ -91,18 +93,69 @@ class DataSourceListAPI(BaseResource):
                                                          name=req['name'],
                                                          type=req['type'],
                                                          options=config)
+        self.record_event({
+            'action': 'create',
+            'object_id': datasource.id,
+            'object_type': 'datasource'
+        })
 
         return datasource.to_dict(all=True)
 
-api.add_org_resource(DataSourceListAPI, '/api/data_sources', endpoint='data_sources')
-api.add_org_resource(DataSourceAPI, '/api/data_sources/<data_source_id>', endpoint='data_source')
 
-
-class DataSourceSchemaAPI(BaseResource):
+class DataSourceSchemaResource(BaseResource):
     def get(self, data_source_id):
         data_source = get_object_or_404(models.DataSource.get_by_id_and_org, data_source_id, self.current_org)
-        schema = data_source.get_schema()
+        require_access(data_source.groups, self.current_user, view_only)
+        refresh = request.args.get('refresh') is not None
+        schema = data_source.get_schema(refresh)
 
         return schema
 
-api.add_org_resource(DataSourceSchemaAPI, '/api/data_sources/<data_source_id>/schema')
+
+class DataSourcePauseResource(BaseResource):
+    @require_admin
+    def post(self, data_source_id):
+        data_source = get_object_or_404(models.DataSource.get_by_id_and_org, data_source_id, self.current_org)
+        data = request.get_json(force=True, silent=True)
+        if data:
+            reason = data.get('reason')
+        else:
+            reason = request.args.get('reason')
+
+        data_source.pause(reason)
+        data_source.save()
+
+        self.record_event({
+            'action': 'pause',
+            'object_id': data_source.id,
+            'object_type': 'datasource'
+        })
+
+        return data_source.to_dict()
+
+    @require_admin
+    def delete(self, data_source_id):
+        data_source = get_object_or_404(models.DataSource.get_by_id_and_org, data_source_id, self.current_org)
+        data_source.resume()
+        data_source.save()
+
+        self.record_event({
+            'action': 'resume',
+            'object_id': data_source.id,
+            'object_type': 'datasource'
+        })
+
+        return data_source.to_dict()
+
+
+class DataSourceTestResource(BaseResource):
+    @require_admin
+    def post(self, data_source_id):
+        data_source = get_object_or_404(models.DataSource.get_by_id_and_org, data_source_id, self.current_org)
+
+        try:
+            data_source.query_runner.test_connection()
+        except Exception as e:
+            return {"message": unicode(e), "ok": False}
+        else:
+            return {"message": "success", "ok": True}

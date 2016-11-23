@@ -19,20 +19,38 @@ def _transform_result(results):
     result_rows = []
 
     for result in results:
-        if not result_columns:
-            for c in result.raw['series'][0]['columns']:
-                result_columns.append({ "name": c })
+        for series in result.raw.get('series', []):
+            for column in series['columns']:
+                if column not in result_columns:
+                    result_columns.append(column)
+            tags = series.get('tags', {})
+            for key in tags.keys():
+                if key not in result_columns:
+                    result_columns.append(key)
 
-        for point in result.get_points():
-            result_rows.append(point)
+    for result in results:
+        for series in result.raw.get('series', []):
+            for point in series['values']:
+                result_row = {}
+                for column in result_columns:
+                    tags = series.get('tags', {})
+                    if column in tags:
+                        result_row[column] = tags[column]
+                    elif column in series['columns']:
+                        index = series['columns'].index(column)
+                        value = point[index]
+                        result_row[column] = value
+                result_rows.append(result_row)
 
     return json.dumps({
-        "columns" : result_columns,
-        "rows" : result_rows
+        "columns": [{'name': c} for c in result_columns],
+        "rows": result_rows
     }, cls=JSONEncoder)
 
 
 class InfluxDB(BaseQueryRunner):
+    noop_query = "show databases"
+
     @classmethod
     def configuration_schema(cls):
         return {
@@ -60,7 +78,7 @@ class InfluxDB(BaseQueryRunner):
     def __init__(self, configuration):
         super(InfluxDB, self).__init__(configuration)
 
-    def run_query(self, query):
+    def run_query(self, query, user):
         client = InfluxDBClusterClient.from_DSN(self.configuration['url'])
 
         logger.debug("influxdb url: %s", self.configuration['url'])

@@ -1,8 +1,19 @@
 (function() {
-  var DashboardCtrl = function($scope, Events, Widget, $routeParams, $location, $http, $timeout, $q, Dashboard) {
+  var PublicDashboardCtrl = function($scope, Events, Widget, $routeParams, $location, $http, $timeout, $q, Dashboard) {
+    $scope.dashboard = seedData.dashboard;
+    $scope.public = true;
+    $scope.dashboard.widgets = _.map($scope.dashboard.widgets, function (row) {
+      return _.map(row, function (widget) {
+        return new Widget(widget);
+      });
+    });
+  };
+
+  var DashboardCtrl = function($scope, Events, Widget, $routeParams, $location, $http, $timeout, $q, $modal, Dashboard) {
     $scope.refreshEnabled = false;
     $scope.isFullscreen = false;
     $scope.refreshRate = 60;
+    $scope.showPermissionsControl = clientConfig.showPermissionsControl;
 
     var renderDashboard = function (dashboard) {
       $scope.$parent.pageTitle = dashboard.name;
@@ -81,9 +92,11 @@
 
             _.each($scope.dashboard.widgets, function(row) {
               _.each(row, function(widget, i) {
-                var newWidget = newWidgets[widget.id];
-                if (newWidget && newWidget[0].visualization.query.latest_query_data_id != widget.visualization.query.latest_query_data_id) {
-                  row[i] = new Widget(newWidget[0]);
+                var newWidget = newWidgets[widget.id][0];
+                if (newWidget.visualization) {
+                  if (newWidget && newWidget.visualization.query.latest_query_data_id != widget.visualization.query.latest_query_data_id) {
+                    row[i] = new Widget(newWidget);
+                  }
                 }
               });
             });
@@ -102,34 +115,127 @@
           $scope.$parent.reloadDashboards();
         });
       }
-    }
+    };
+
+    $scope.showManagePermissionsModal = function() {
+        // Create scope for share permissions dialog and pass api path to it
+        var scope = $scope.$new();
+        $scope.apiAccess = 'api/dashboards/' + $scope.dashboard.id + '/acl';
+
+        $modal.open({
+          scope: scope,
+          templateUrl: '/views/dialogs/manage_permissions.html',
+          controller: 'ManagePermissionsCtrl'
+        });
+    };
+
+    $scope.togglePublished = function () {
+      Events.record(currentUser, "toggle_published", "dashboard", $scope.dashboard.id);
+      $scope.dashboard.is_draft = !$scope.dashboard.is_draft;
+      $scope.saveInProgress = true;
+      Dashboard.save({slug: $scope.dashboard.id, name: $scope.dashboard.name,
+                      layout: JSON.stringify($scope.dashboard.layout),
+                      is_draft: $scope.dashboard.is_draft},
+                     function() {$scope.saveInProgress = false;});
+
+    };
 
     $scope.toggleFullscreen = function() {
       $scope.isFullscreen = !$scope.isFullscreen;
+      $('body').toggleClass('headless');
+      if ($scope.isFullscreen) {
+        $location.search('fullscreen', true);
+      } else {
+        $location.search('fullscreen', null);
+      }
     };
+
+    if (_.has($location.search(), 'fullscreen')) {
+      $scope.toggleFullscreen();
+    }
 
     $scope.triggerRefresh = function() {
       $scope.refreshEnabled = !$scope.refreshEnabled;
 
-      Events.record(currentUser, "autorefresh", "dashboard", dashboard.id, {'enable': $scope.refreshEnabled});
+      Events.record(currentUser, "autorefresh", "dashboard", $scope.dashboard.id, {'enable': $scope.refreshEnabled});
 
       if ($scope.refreshEnabled) {
         var refreshRate = _.min(_.map(_.flatten($scope.dashboard.widgets), function(widget) {
-          var schedule = widget.visualization.query.schedule;
-          if (schedule === null || schedule.match(/\d\d:\d\d/) !== null) {
-            return 60;
+          if (widget.visualization) {
+            var schedule = widget.visualization.query.schedule;
+            if (schedule === null || schedule.match(/\d\d:\d\d/) !== null) {
+              return 60;
+            }
+            return widget.visualization.query.schedule;
           }
-          return widget.visualization.query.schedule;
         }));
 
-        $scope.refreshRate = _.max([120, refreshRate * 2]) * 1000;
+        $scope.refreshRate = _.min([300, refreshRate]) * 1000;
 
         autoRefresh();
       }
     };
+
+    $scope.openShareForm = function() {
+      $modal.open({
+        templateUrl: '/views/dashboard_share.html',
+        size: 'sm',
+        scope: $scope,
+        controller: ['$scope', '$modalInstance', '$http', function($scope, $modalInstance, $http) {
+          $scope.close = function() {
+            $modalInstance.close();
+          };
+
+          $scope.toggleSharing = function() {
+            var url = 'api/dashboards/' + $scope.dashboard.id + '/share';
+            if ($scope.dashboard.publicAccessEnabled) {
+              // disable
+              $http.delete(url).success(function() {
+                $scope.dashboard.publicAccessEnabled = false;
+                delete $scope.dashboard.public_url;
+              }).error(function() {
+                $scope.dashboard.publicAccessEnabled = true;
+                // TODO: show message
+              })
+            } else {
+              $http.post(url).success(function(data) {
+                $scope.dashboard.publicAccessEnabled = true;
+                $scope.dashboard.public_url = data.public_url;
+              }).error(function() {
+                $scope.dashboard.publicAccessEnabled = false;
+                // TODO: show message
+              });
+            }
+          };
+        }]
+      });
+    }
   };
 
-  var WidgetCtrl = function($scope, $location, Events, Query) {
+  var WidgetCtrl = function($scope, $location, Events, Query, $modal) {
+    $scope.editTextBox = function() {
+      $modal.open({
+        templateUrl: '/views/edit_text_box_form.html',
+        scope: $scope,
+        controller: ['$scope', '$modalInstance', 'growl', function($scope, $modalInstance, growl) {
+          $scope.close = function() {
+            $modalInstance.close();
+          };
+
+          $scope.saveWidget = function() {
+            $scope.saveInProgress = true;
+            $scope.widget.$save().then(function(response) {
+              $scope.close();
+            }).catch(function() {
+              growl.addErrorMessage("Widget can not be updated");
+            }).finally(function() {
+              $scope.saveInProgress = false;
+            });
+          };
+        }],
+      });
+    }
+
     $scope.deleteWidget = function() {
       if (!confirm('Are you sure you want to remove "' + $scope.widget.getName() + '" from the dashboard?')) {
         return;
@@ -147,19 +253,26 @@
         $scope.dashboard.widgets = _.filter($scope.dashboard.widgets, function(row) { return row.length > 0 });
 
         $scope.dashboard.layout = response.layout;
+        $scope.dashboard.version = response.version;
       });
     };
 
     Events.record(currentUser, "view", "widget", $scope.widget.id);
+
+    $scope.reload = function(force) {
+      var maxAge = $location.search()['maxAge'];
+      if (force) {
+        maxAge = 0;
+      }
+      $scope.queryResult = $scope.query.getQueryResult(maxAge);
+    };
 
     if ($scope.widget.visualization) {
       Events.record(currentUser, "view", "query", $scope.widget.visualization.query.id);
       Events.record(currentUser, "view", "visualization", $scope.widget.visualization.id);
 
       $scope.query = $scope.widget.getQuery();
-      var parameters = Query.collectParamsFromQueryString($location, $scope.query);
-      var maxAge = $location.search()['maxAge'];
-      $scope.queryResult = $scope.query.getQueryResult(maxAge, parameters);
+      $scope.reload(false);
 
       $scope.type = 'visualization';
     } else if ($scope.widget.restricted) {
@@ -170,7 +283,8 @@
   };
 
   angular.module('redash.controllers')
-    .controller('DashboardCtrl', ['$scope', 'Events', 'Widget', '$routeParams', '$location', '$http', '$timeout', '$q', 'Dashboard', DashboardCtrl])
-    .controller('WidgetCtrl', ['$scope', '$location', 'Events', 'Query', WidgetCtrl])
+    .controller('DashboardCtrl', ['$scope', 'Events', 'Widget', '$routeParams', '$location', '$http', '$timeout', '$q', '$modal', 'Dashboard', DashboardCtrl])
+    .controller('PublicDashboardCtrl', ['$scope', 'Events', 'Widget', '$routeParams', '$location', '$http', '$timeout', '$q', 'Dashboard', PublicDashboardCtrl])
+    .controller('WidgetCtrl', ['$scope', '$location', 'Events', 'Query', '$modal', WidgetCtrl])
 
 })();

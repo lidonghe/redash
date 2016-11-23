@@ -2,7 +2,18 @@
 set -eu
 
 REDASH_BASE_PATH=/opt/redash
-FILES_BASE_URL=https://raw.githubusercontent.com/getredash/redash/master/setup/amazon_linux/files/
+
+# Default branch/version to master if not specified in REDASH_BRANCH env var
+REDASH_BRANCH="${REDASH_BRANCH:-master}"
+
+# Install latest version if not specified in REDASH_VERSION env var
+REDASH_VERSION=${REDASH_VERSION-0.11.1.b2095}
+LATEST_URL="https://github.com/getredash/redash/releases/download/v${REDASH_VERSION}/redash.${REDASH_VERSION}.tar.gz"
+VERSION_DIR="/opt/redash/redash.${REDASH_VERSION}"
+REDASH_TARBALL=/tmp/redash.tar.gz
+
+FILES_BASE_URL=https://raw.githubusercontent.com/getredash/redash/${REDASH_BRANCH}/setup/amazon_linux/files/
+
 # Verify running as root:
 if [ "$(id -u)" != "0" ]; then
     if [ $# -ne 0 ]; then
@@ -103,13 +114,6 @@ if [ ! -f "/opt/redash/.env" ]; then
     sudo -u redash wget $FILES_BASE_URL"env" -O /opt/redash/.env
 fi
 
-# Install latest version
-REDASH_VERSION=${REDASH_VERSION-0.9.1.b1377}
-LATEST_URL="https://github.com/getredash/redash/releases/download/v${REDASH_VERSION}/redash.$REDASH_VERSION.tar.gz"
-VERSION_DIR="/opt/redash/redash.$REDASH_VERSION"
-REDASH_TARBALL=/tmp/redash.tar.gz
-REDASH_TARBALL=/tmp/redash.tar.gz
-
 if [ ! -d "$VERSION_DIR" ]; then
     sudo -u redash wget $LATEST_URL -O $REDASH_TARBALL
     sudo -u redash mkdir $VERSION_DIR
@@ -134,8 +138,8 @@ yum install -y mysql-devel
 pip install MySQL-python==1.2.5
 
 # Microsoft SQL Server dependencies (`sudo` required):
-sudo apt-get install -y freetds-dev
-sudo pip install pymssql==2.1.1
+sudo yum install -y freetds-devel
+sudo pip install pymssql==2.1.2
 
 # Mongo dependencies:
 pip install pymongo==2.7.2

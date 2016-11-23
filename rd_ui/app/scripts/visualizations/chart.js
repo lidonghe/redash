@@ -13,7 +13,8 @@
       xAxis: {type: 'datetime', labels: {enabled: true}},
       series: {stacking: null},
       seriesOptions: {},
-      columnMapping: {}
+      columnMapping: {},
+      bottomMargin: 50
     };
 
     VisualizationProvider.registerVisualization({
@@ -69,6 +70,7 @@
         options: '=?'
       },
       link: function (scope, element, attrs) {
+        scope.currentTab = 'general';
         scope.colors = _.extend({'Automatic': null}, ColorPalette);
 
         scope.stackingOptions = {
@@ -92,16 +94,18 @@
         };
 
         scope.xAxisScales = ['datetime', 'linear', 'logarithmic', 'category'];
-        scope.yAxisScales = ['linear', 'logarithmic'];
+        scope.yAxisScales = ['linear', 'logarithmic', 'datetime'];
 
         var refreshColumns = function() {
           scope.columns = scope.queryResult.getColumns();
           scope.columnNames = _.pluck(scope.columns, 'name');
-          if (scope.columnNames.length > 0)
+          if (scope.columnNames.length > 0) {
             _.each(_.difference(_.keys(scope.options.columnMapping), scope.columnNames), function(column) {
               delete scope.options.columnMapping[column];
             });
+          }
         };
+
         refreshColumns();
 
         var refreshColumnsAndForm = function() {
@@ -189,6 +193,10 @@
 
         if (!_.has(scope.options, 'legend')) {
           scope.options.legend = {enabled: true};
+        }
+
+        if (!_.has(scope.options, 'bottomMargin')) {
+          scope.options.bottomMargin = 50;
         }
 
         if (scope.columnNames)

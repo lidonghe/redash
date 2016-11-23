@@ -28,16 +28,16 @@ types_map = {
 }
 
 
-def _wait(conn):
+def _wait(conn, timeout=None):
     while 1:
         try:
             state = conn.poll()
             if state == psycopg2.extensions.POLL_OK:
                 break
             elif state == psycopg2.extensions.POLL_WRITE:
-                select.select([], [conn.fileno()], [])
+                select.select([], [conn.fileno()], [], timeout)
             elif state == psycopg2.extensions.POLL_READ:
-                select.select([conn.fileno()], [], [])
+                select.select([conn.fileno()], [], [], timeout)
             else:
                 raise psycopg2.OperationalError("poll() returned %s" % state)
         except select.error:
@@ -45,6 +45,8 @@ def _wait(conn):
 
 
 class PostgreSQL(BaseSQLQueryRunner):
+    noop_query = "SELECT 1"
+
     @classmethod
     def configuration_schema(cls):
         return {
@@ -93,7 +95,7 @@ class PostgreSQL(BaseSQLQueryRunner):
         WHERE table_schema NOT IN ('pg_catalog', 'information_schema');
         """
 
-        results, error = self.run_query(query)
+        results, error = self.run_query(query, None)
 
         if error is not None:
             raise Exception("Failed getting schema.")
@@ -113,9 +115,9 @@ class PostgreSQL(BaseSQLQueryRunner):
 
         return schema.values()
 
-    def run_query(self, query):
+    def run_query(self, query, user):
         connection = psycopg2.connect(self.connection_string, async=True)
-        _wait(connection)
+        _wait(connection, timeout=10)
 
         cursor = connection.cursor()
 
@@ -152,4 +154,37 @@ class PostgreSQL(BaseSQLQueryRunner):
 
         return json_data, error
 
+
+class Redshift(PostgreSQL):
+    @classmethod
+    def type(cls):
+        return "redshift"
+
+    @classmethod
+    def configuration_schema(cls):
+        return {
+            "type": "object",
+            "properties": {
+                "user": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "number"
+                },
+                "dbname": {
+                    "type": "string",
+                    "title": "Database Name"
+                }
+            },
+            "required": ["dbname", "user", "password", "host", "port"],
+            "secret": ["password"]
+        }
+
 register(PostgreSQL)
+register(Redshift)

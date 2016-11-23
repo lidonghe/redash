@@ -8,12 +8,13 @@ from flask_script import Manager
 
 from redash import settings, models, __version__
 from redash.wsgi import app
-from redash.cli import users, database, data_sources, organization
+from redash.cli import users, groups, database, data_sources, organization
 from redash.monitor import get_status
 
 manager = Manager(app)
 manager.add_command("database", database.manager)
 manager.add_command("users", users.manager)
+manager.add_command("groups", groups.manager)
 manager.add_command("ds", data_sources.manager)
 manager.add_command("org", organization.manager)
 
@@ -46,12 +47,16 @@ def check_settings():
     for name, item in settings.all_settings().iteritems():
         print "{} = {}".format(name, item)
 
-@manager.command
-def send_test_mail():
+
+@manager.option('email', default=None, help="Email address to send test message to (default: the address you defined in MAIL_DEFAULT_SENDER)")
+def send_test_mail(email=None):
     from redash import mail
     from flask_mail import Message
 
-    mail.send(Message(subject="Test Message from re:dash", recipients=[settings.MAIL_DEFAULT_SENDER], body="Test message."))
+    if email is None:
+        email = settings.MAIL_DEFAULT_SENDER
+
+    mail.send(Message(subject="Test Message from re:dash", recipients=[email], body="Test message."))
 
 
 if __name__ == '__main__':

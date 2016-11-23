@@ -38,7 +38,7 @@ class ConfigurationContainer(object):
         return self._config.iteritems()
 
     def to_dict(self, mask_secrets=False):
-        if (mask_secrets is False or 'secret' not in self.schema):
+        if mask_secrets is False or 'secret' not in self.schema:
             return self._config
 
         config = self._config.copy()
@@ -53,7 +53,7 @@ class ConfigurationContainer(object):
 
         config = {}
         for k, v in new_config.iteritems():
-            if k in self.schema['secret'] and v == SECRET_PLACEHOLDER:
+            if k in self.schema.get('secret', []) and v == SECRET_PLACEHOLDER:
                 config[k] = self[k]
             else:
                 config[k] = v
@@ -62,6 +62,9 @@ class ConfigurationContainer(object):
 
     def get(self, *args, **kwargs):
         return self._config.get(*args, **kwargs)
+
+    def __setitem__(self, key, value):
+        self._config[key] = value
 
     def __getitem__(self, item):
         if item in self._config:

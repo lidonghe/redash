@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  function QuerySourceCtrl(Events, growl, $controller, $scope, $location, Query, Visualization, KeyboardShortcuts) {
+  function QuerySourceCtrl(Events, growl, $controller, $scope, $location, $http, Query, Visualization, KeyboardShortcuts) {
     // extends QueryViewCtrl
     $controller('QueryViewCtrl', {$scope: $scope});
     // TODO:
@@ -17,7 +17,7 @@
         saveQuery = $scope.saveQuery;
 
     $scope.sourceMode = true;
-    $scope.canEdit = currentUser.canEdit($scope.query);// TODO: bring this back? || clientConfig.allowAllToEditQueries;
+    $scope.canEdit = currentUser.canEdit($scope.query) || $scope.query.can_edit;// TODO: bring this back? || clientConfig.allowAllToEditQueries;
     $scope.isDirty = false;
     $scope.base_url = $location.protocol()+"://"+$location.host()+":"+$location.port();
 
@@ -53,13 +53,24 @@
     $scope.saveQuery = function(options, data) {
       var savePromise = saveQuery(options, data);
 
+      if (!savePromise) {
+        return;
+      }
+
       savePromise.then(function(savedQuery) {
         queryText = savedQuery.query;
         $scope.isDirty = $scope.query.query !== queryText;
+        // update to latest version number
+        $scope.query.version = savedQuery.version;
 
         if (isNewQuery) {
           // redirect to new created query (keep hash)
-          $location.path(savedQuery.getSourceLink()).replace();
+          $location.path(savedQuery.getSourceLink());
+        }
+      }, function(error) {
+        if(error.status == 409) {
+          growl.addErrorMessage('It seems like the query has been modified by another user. ' +
+            'Please copy/backup your changes and reload this page.', {ttl: -1});
         }
       });
 
@@ -97,7 +108,6 @@
         }, function () {
           growl.addErrorMessage("Error deleting visualization. Maybe it's used in a dashboard?");
         });
-
       }
     };
 
@@ -108,20 +118,10 @@
     $scope.$on('$destroy', function destroy() {
       KeyboardShortcuts.unbind(shortcuts);
     });
-
-    if (isNewQuery) {
-      // save new query when creating a visualization
-      var unbind = $scope.$watch('selectedTab == "add"', function(triggerSave) {
-        if (triggerSave) {
-          unbind();
-          $scope.saveQuery();
-        }
-      });
-    }
   }
 
   angular.module('redash.controllers').controller('QuerySourceCtrl', [
-    'Events', 'growl', '$controller', '$scope', '$location', 'Query',
-    'Visualization', 'KeyboardShortcuts', QuerySourceCtrl
+    'Events', 'growl', '$controller', '$scope', '$location', '$http',
+    'Query', 'Visualization', 'KeyboardShortcuts', QuerySourceCtrl
     ]);
 })();
